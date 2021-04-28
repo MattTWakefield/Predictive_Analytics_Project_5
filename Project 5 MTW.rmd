@@ -1,0 +1,76 @@
+---
+title: "Project 5"
+author: "Matt Wakefield"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    fig_caption: yes
+    keep_tex: yes
+    latex_engine: pdflatex
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+  word_document:
+    toc: yes
+    toc_depth: '4'
+header-includes:
+- \usepackage{amsmath}
+- \usepackage{amssymb}
+- \usepackage{amsfonts}
+- \usepackage{subfig}
+- \usepackage{graphicx}
+- \usepackage{amsthm}
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhf{}
+- \rhead{STAT 5290-- Predictive Analytics}
+- \lhead{Project 5}
+- \cfoot{\thepage}
+- \usepackage{algorithm}
+- \usepackage[noend]{algpseudocode}
+geometry: margin=1in
+spacing: single
+fontsize: 11pt
+---
+
+## Introduction.
+
+Modeling climate change is an extraordinarily complex endevor that require large disparate teams to contribute to the project according to their area of expertise. 
+
+This model is developed via several parameters (columns 3 through 20). Due to the complexity of this model it can crash at times. This is represented by the outcome variable and contains the values 0 for crashed or 1 for ran successfully. 
+
+The samples were gathered via a method known as latin hybercube sampling. Which samples out of a cumulative density function where each variable is it's own dimension. 
+
+Our goal will be to identify the parameters that are causing this failure, and be able to accurately predict whether or not a series of parameters will lead to a failure. 
+
+
+## Data Preperation & Exploratory Data Analysis
+
+
+```{r message= F, warning= F}
+library(tidyverse)
+library(skimr )
+
+
+```
+
+
+
+```{r}
+
+df<-read.table('http://archive.ics.uci.edu/ml/machine-learning-databases/00252/pop_failures.dat', header = TRUE)
+
+skim(df)
+
+
+```
+Firstly we observe that there are no missing values, thus there's no need for imputation.
+
+What we can observe is that each of the variables has been normalized at a scale of 0 to 1, with each ntile corresponding the value (e.g. .25 corresponds to the 25th percentile)
+
+The first and second variables, Study and Run, are likely not relevant to the outcome. Through EDA we can at least gauge whether or not Study is equally representative. 
+
+Most of the focus of the EDA will be on how the variables relate to one another, and if it's immediately apparent that these variables appear to be associated with failures. 
+
+```{r]}
+
