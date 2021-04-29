@@ -50,11 +50,12 @@ Our goal will be to identify the parameters that are causing this failure, and b
 ```{r message= F, warning= F}
 library(tidyverse)
 library(skimr )
-
+library(corrplot)
+library(factoextra)
 
 ```
 
-
+### Read file and present basic summary data.
 
 ```{r}
 
@@ -72,5 +73,34 @@ The first and second variables, Study and Run, are likely not relevant to the ou
 
 Most of the focus of the EDA will be on how the variables relate to one another, and if it's immediately apparent that these variables appear to be associated with failures. 
 
-```{r]}
+### Correlation Among Variables
+
+```{r}
+
+df_corr<-df%>%select(-c(Study, Run, outcome))%>%cor()
+corrplot(df_corr, type="upper",method = "color", add.coef.col = 'black',tl.col = 'black',number.cex= .5, tl.cex = .6)
+
+paste('The Average Correlation is', df_corr[df_corr !=1]%>%mean()%>%round(.,5))
+
+
+```
+
+
+Perhaps as a result of the normalization effort somehow leads to 0 correlation. Regardless, we can assume that our variables are about as independent as possible. 
+
+### Principal Component Analysis
+
+```{r fig.align='left'}
+
+par(mar = c(0, 0, 0, 0))
+df_pca<-df%>%select(-c(Study, Run, outcome))%>%as.matrix()
+df_pca <- prcomp(df_pca, scale = TRUE, center = TRUE)
+fviz_eig(df_pca, ncp = 18)
+
+```
+As we can see, each additional PCA dimension consistently adds between 5 and 6 percent variance. Typically want we want to see is that one particular dimension is clearly in the lead, so we can list those variables to see what's really influencing the shape of this data. 
+
+Regardless the 1st PCA is listed below:
+
+
 
