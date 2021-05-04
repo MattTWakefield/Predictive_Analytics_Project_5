@@ -52,6 +52,8 @@ library(tidyverse)
 library(skimr )
 library(corrplot)
 library(factoextra)
+library(ggfortify)
+library(tidymodels)
 
 ```
 
@@ -95,12 +97,90 @@ Perhaps as a result of the normalization effort somehow leads to 0 correlation. 
 par(mar = c(0, 0, 0, 0))
 df_pca<-df%>%select(-c(Study, Run, outcome))%>%as.matrix()
 df_pca <- prcomp(df_pca, scale = TRUE, center = TRUE)
-fviz_eig(df_pca, ncp = 18)
+pca_viz<-fviz_eig(df_pca, ncp = 18)
+pca_viz
 
 ```
 As we can see, each additional PCA dimension consistently adds between 5 and 6 percent variance. Typically want we want to see is that one particular dimension is clearly in the lead, so we can list those variables to see what's really influencing the shape of this data. 
 
 Regardless the 1st PCA is listed below:
+
+```{r}
+
+df_pca$rotation[,1]%>%abs()%>%sort(., decreasing = T)%>%head(4)
+
+
+```
+
+
+```{r}
+
+
+autoplot(df_pca, data = df, colour = 'outcome',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 3)
+
+```
+
+As we can see the variables are all over the place, as is the relation of those variables to the outcome. One possible trend is in the lower right hand side of the plot, that indicates ah_bolus, vconst_2, v_const3, backgrnd_vdc_ban, and backgrnd_vdc_psim all vary together somewhat. Unfortunately the scattering of outcomes is just as random as it is across the rest of the plot, and the overall contribution to variance is still very small. 
+
+The PCA does not give us a clear idea of variables we can discard yet to encourage a parsimonious model. 
+
+### Means of values related to failure.
+
+
+```{r}
+
+df_means<-df%>%select(-c(Study, Run))
+df_means<-df_means%>%pivot_longer(cols = -c(outcome))%>%group_by(outcome, name)%>%summarise(mean = mean(value))%>%filter(outcome == 0)%>%arrange(desc(mean))
+df_means
+
+```
+
+We finally have some hints about how this data may be related to failure. 
+
+Because the data has been normalized, we can compare the mean of one variable to another. Note that the mean value of vconst_corr is much higher for failures (.78) then it is bckgrnd_vdc1 (.33)
+
+Perhaps the model that creates this variable should be looked at to see why higher values would cause a crash.
+
+## Data Partition
+
+```{r}
+set.seed(123)
+
+df<-df%>%select(-c(Study,Run))
+
+df$outcome<-df$outcome%>%factor()
+n <- nrow(df)
+split_data <- sample(x=1:2, size = n, replace=TRUE, prob=c(0.67, 0.33))
+D1 <- df[split_data == 1, ]
+D2 <- df[split_data == 2, ]
+y.train <- D1$outcome
+yobs <- D2$outcome
+
+data.frame('Split'=c('Train','Test'),'Observations'=c(nrow(D1), nrow(D2)))
+
+
+```
+## Models
+
+### Logistic Regression
+
+```{r}
+
+
+
+log_mod<-logistic_reg(penalty = tune(), mixture =1)%>%
+  set_engine('glmnet')
+
+log_fit<-log_mod%>%fit(outcome ~ ., data = D1)
+
+log_fit
+
+
+
+```
+
 
 
 
