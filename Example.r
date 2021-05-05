@@ -2,7 +2,7 @@ data(cells, package = "modeldata")
 cells
 
 set.seed(123)
-cell_split<-initial_split(cells%>%select(-case), strata = class)
+cell_split<-initial_split(cells%>%select(-case), prop = 2/3)
 cell_train<-training(cell_split)
 cell_test<-testing(cell_split)
 

@@ -170,17 +170,87 @@ data.frame('Split'=c('Train','Test'),'Observations'=c(nrow(D1), nrow(D2)))
 
 
 
-log_mod<-logistic_reg(penalty = tune(), mixture =1)%>%
-  set_engine('glmnet')
+log_mod<-logistic_reg(penalty = tune(), mixture = tune())%>%
+  set_engine('glmnet')%>%
+  set_mode('classification')
 
-log_fit<-log_mod%>%fit(outcome ~ ., data = D1)
+log_grid<-grid_regular(penalty(),mixture(),levels = 20)
 
-log_fit
+D1_folds<-vfold_cv(D1)
 
+log_wf<-workflow()%>%
+  add_model(log_mod)%>%
+  add_formula(outcome ~ .)
 
+log_res<-log_wf%>%tune_grid(resamples = D1_folds,
+                              grid = log_grid)
+
+log_best<-log_res%>%select_best("roc_auc")
+
+final_log_wf<-log_wf%>%finalize_workflow(log_best)
+
+final_log<-final_log_wf%>%fit(data = D1)
+
+final_log
+
+prediction_metrics_log<-data.frame(D2$outcome,predict(final_log,D2),predict(final_log,D2, type = "prob"))
+
+metrics_log<-metrics(prediction_metrics_log, D2.outcome,.pred_class, .pred_0)
+
+metrics<-data.frame(Model_Type='Logistic_Model',metrics_log)
 
 ```
 
 
+
+```{r}
+
+
+
+rf_mod<-rand_forest(mtry =tune(),trees = tune(), min_n = tune())%>%
+  set_engine('ranger')%>%
+#%>%
+  set_mode('classification')
+
+
+rf_wf<-workflow()%>%
+  add_model(rf_mod)%>%
+  add_formula(outcome ~ .)
+
+#rf_res<-rf_wf%>%tune_grid(resamples = D1_folds,
+#                              grid = rf_grid)
+
+rf_res<-rf_wf%>%tune_grid(resamples = D1_folds,
+                              grid = 20)
+
+rf_best<-rf_res%>%select_best("roc_auc")
+
+final_rf_wf<-rf_wf%>%finalize_workflow(rf_best)
+
+final_rf<-final_rf_wf%>%fit(data = D1)
+
+prediction_metrics_rf<-data.frame(D2$outcome,predict(final_rf,D2),predict(final_rf,D2, type = "prob"))
+
+metrics_rf<-metrics(prediction_metrics_rf, D2.outcome,.pred_class, .pred_0)
+
+metrics<-rbind(metrics,data.frame(Model_Type='Random_Forest',metrics_rf))
+
+```
+
+
+```{r}
+nn_mod<-mlp(hidden_units = c(2,5), dropout = .1)%>%
+  set_engine('nnet')%>%
+  set_mode('classification')
+
+
+nn_wf<-workflow()%>%
+  add_model(nn_mod)%>%
+  add_formula(outcome ~ .)
+
+nn_wf<-nn_wf%>%tune_grid(resamples = D1_folds,
+                              grid = 5)
+
+```
 
 
