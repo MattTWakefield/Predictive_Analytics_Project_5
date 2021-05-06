@@ -44,7 +44,7 @@ The samples were gathered via a method known as latin hybercube sampling. Which 
 Our goal will be to identify the parameters that are causing this failure, and be able to accurately predict whether or not a series of parameters will lead to a failure. 
 
 
-## Data Preperation & Exploratory Data Analysis
+## Data Preperation and Exploratory Data Analysis
 
 
 ```{r message= F, warning= F}
@@ -54,6 +54,8 @@ library(corrplot)
 library(factoextra)
 library(ggfortify)
 library(tidymodels)
+library(keras)
+library(vip)
 
 ```
 
@@ -63,7 +65,7 @@ library(tidymodels)
 
 df<-read.table('http://archive.ics.uci.edu/ml/machine-learning-databases/00252/pop_failures.dat', header = TRUE)
 
-skim(df)
+skim_without_charts(df)
 
 
 ```
@@ -129,7 +131,7 @@ The PCA does not give us a clear idea of variables we can discard yet to encoura
 ### Means of values related to failure.
 
 
-```{r}
+```{r, message=F}
 
 df_means<-df%>%select(-c(Study, Run))
 df_means<-df_means%>%pivot_longer(cols = -c(outcome))%>%group_by(outcome, name)%>%summarise(mean = mean(value))%>%filter(outcome == 0)%>%arrange(desc(mean))
@@ -142,6 +144,12 @@ We finally have some hints about how this data may be related to failure.
 Because the data has been normalized, we can compare the mean of one variable to another. Note that the mean value of vconst_corr is much higher for failures (.78) then it is bckgrnd_vdc1 (.33)
 
 Perhaps the model that creates this variable should be looked at to see why higher values would cause a crash.
+
+```{r}
+table(df$outcome)
+```
+
+Finally we can see that we are dealing with a very imbalanced target variable. With the ratio of the majority being over 10x that of the minority. 
 
 ## Data Partition
 
@@ -161,7 +169,24 @@ yobs <- D2$outcome
 data.frame('Split'=c('Train','Test'),'Observations'=c(nrow(D1), nrow(D2)))
 
 
+
+
 ```
+
+Due to class imbalance of the target variable, let's go ahead and upsample the training set. 
+
+```{r}
+
+D1_upsample <- recipe( ~ ., data = D1) %>%
+  step_upsample(outcome, over_ratio = (1/3))%>%
+  prep(training = D1)
+D1 <- bake(D1_upsample, new_data = NULL)
+
+table(D1$outcome)
+
+```
+
+
 ## Models
 
 ### Logistic Regression
@@ -191,7 +216,11 @@ final_log_wf<-log_wf%>%finalize_workflow(log_best)
 
 final_log<-final_log_wf%>%fit(data = D1)
 
-final_log
+final_log$fit$fit$spec
+
+ final_log%>%
+  pull_workflow_fit() %>%
+  tidy()
 
 prediction_metrics_log<-data.frame(D2$outcome,predict(final_log,D2),predict(final_log,D2, type = "prob"))
 
@@ -201,6 +230,20 @@ metrics<-data.frame(Model_Type='Logistic_Model',metrics_log)
 
 ```
 
+Here we are using an elastic net that is closer to ridge regression then it is lasso regression. These parameters were chosen via a grid search of 20 samples using 10 fold cross validation. 
+
+
+```{r}
+
+final_log%>%
+    pull_workflow_fit() %>%
+    tidy()%>%arrange(desc(abs(estimate)))
+
+```
+
+Above indicates the magnitude of the coefficients. Because all variables were normalized beforehand, we can safely assume that the largest absolute value of the coefficient is a pretty good indicator of variable importance.
+
+### Random Forest
 
 
 ```{r}
@@ -208,7 +251,7 @@ metrics<-data.frame(Model_Type='Logistic_Model',metrics_log)
 
 
 rf_mod<-rand_forest(mtry =tune(),trees = tune(), min_n = tune())%>%
-  set_engine('ranger')%>%
+  set_engine('ranger',importance = "permutation")%>%
 #%>%
   set_mode('classification')
 
@@ -228,6 +271,17 @@ rf_best<-rf_res%>%select_best("roc_auc")
 final_rf_wf<-rf_wf%>%finalize_workflow(rf_best)
 
 final_rf<-final_rf_wf%>%fit(data = D1)
+```
+
+
+Similar to our log model process, we run a grid pattern of 20 values for trees and min_n.
+
+```{r}
+
+
+final_rf%>%
+    pull_workflow_fit() %>%
+    vip(geom = "col")
 
 prediction_metrics_rf<-data.frame(D2$outcome,predict(final_rf,D2),predict(final_rf,D2, type = "prob"))
 
@@ -237,20 +291,134 @@ metrics<-rbind(metrics,data.frame(Model_Type='Random_Forest',metrics_rf))
 
 ```
 
+As we can see, the importance of the factors is similar to the log model as well with vconst_2 and vconst_corr pulling well ahead of the others.
+
+### Neural Nets
+
 
 ```{r}
-nn_mod<-mlp(hidden_units = c(2,5), dropout = .1)%>%
+
+D1_x<-D1%>%select(-outcome)%>%as.matrix()
+D1_y<-D1%>%select(outcome)%>%as.matrix()%>%to_categorical()
+
+D2_x<-D2%>%select(-outcome)%>%as.matrix()
+D2_y<-D2%>%select(outcome)%>%as.matrix()%>%to_categorical()
+
+nn_mod<-mlp(hidden_units = c(4,2))%>%
   set_engine('nnet')%>%
   set_mode('classification')
 
+nn_mod2 <- keras_model_sequential() %>%
+  layer_dense(units = 10, activation = "relu", input_shape = 18) %>%
+  layer_dense(units = 30, activation = "relu") %>%
+  layer_dense(units = 2, activation = "sigmoid")%>%
+  compile(
+    loss = 'categorical_crossentropy',
+    optimizer = optimizer_rmsprop(),
+    metrics = c('accuracy')
+  )
 
-nn_wf<-workflow()%>%
-  add_model(nn_mod)%>%
-  add_formula(outcome ~ .)
 
-nn_wf<-nn_wf%>%tune_grid(resamples = D1_folds,
-                              grid = 5)
+nn_mod4 <- keras_model_sequential() %>%
+  layer_dense(units = 10, activation = "relu", input_shape = 18) %>%
+  layer_dense(units = 30, activation = "relu") %>%
+    layer_dense(units = 75, activation = "relu") %>%
+    layer_dense(units = 40, activation = "relu") %>%
+  layer_dense(units = 2, activation = "sigmoid")%>%
+  compile(
+    loss = 'categorical_crossentropy',
+    optimizer = optimizer_rmsprop(),
+    metrics = c('accuracy')
+  )
+
+nn_mod5 <- keras_model_sequential() %>%
+  layer_dense(units = 10, activation = "relu", input_shape = 18) %>%
+  layer_dense(units = 120, activation = "relu") %>%
+    layer_dense(units = 75, activation = "relu") %>%
+    layer_dense(units = 100, activation = "relu") %>%
+      layer_dense(units = 40, activation = "relu") %>%
+  layer_dense(units = 2, activation = "sigmoid")%>%
+  compile(
+    loss = 'categorical_crossentropy',
+    optimizer = optimizer_rmsprop(),
+    metrics = c('accuracy')
+  )
+
+
+nn_fi2 <- nn_mod2 %>% 
+  fit(
+    D1_x, 
+    D1_y, 
+    epochs = 500, 
+    validation_split = 0.2,
+    verbose = FALSE
+  )
+
+nn_fit4 <- nn_mod4 %>% 
+  fit(
+    D1_x, 
+    D1_y, 
+    epochs = 500, 
+    validation_split = 0.2,
+    verbose = FALSE
+  )
+
+nn_fit5 <- nn_mod5 %>% 
+  fit(
+    D1_x, 
+    D1_y, 
+    epochs = 500, 
+    validation_split = 0.2,
+    verbose = FALSE
+  )
+
+
+
+nn2_fit <- predict_classes(object = nn_mod2, x = D2_x)%>%factor()
+nn2_fit_p <- predict_proba(object = nn_mod2, x = D2_x)
+nn2_fits<-data.frame(outcome = D2$outcome, .pred_class=nn2_fit,.pred_0 = nn2_fit_p[,1]) 
+metrics_nn2<-metrics(nn2_fits, outcome,.pred_class, .pred_0)
+
+
+nn4_fit <- predict_classes(object = nn_mod4, x = D2_x)%>%factor()
+nn4_fit_p <- predict_proba(object = nn_mod4, x = D2_x)
+nn4_fits<-data.frame(outcome = D2$outcome, .pred_class=nn4_fit,.pred_0 = nn4_fit_p[,1]) 
+metrics_nn4<-metrics(nn4_fits, outcome,.pred_class, .pred_0)
+
+
+nn5_fit <- predict_classes(object = nn_mod5, x = D2_x)%>%factor()
+nn5_fit_p <- predict_proba(object = nn_mod5, x = D2_x)
+nn5_fits<-data.frame(outcome = D2$outcome, .pred_class=nn5_fit,.pred_0 = nn5_fit_p[,1]) 
+metrics_nn5<-metrics(nn5_fits, outcome,.pred_class, .pred_0)
+
+
+metrics<-rbind(metrics,data.frame(Model_Type='NN 2 Layers',metrics_nn2))
+metrics<-rbind(metrics,data.frame(Model_Type='NN 4 Layers',metrics_nn4))
+metrics<-rbind(metrics,data.frame(Model_Type='NN 5 Layers',metrics_nn5))
 
 ```
 
+A variety of layers and node counts were used in the creation of the three models. One thing that wasn't anticipated, is that the training time for these models was much quicker then that of the other models.
+
+This may be because we didn't tune our hyperparameters here via a grid search like we did for 
+
+## Model Comparison
+
+```{r}
+
+ggplot(data = metrics, aes(x = Model_Type, y = .estimate, fill = Model_Type))+
+  geom_col()+
+  facet_wrap(.~.metric, scales = 'free')+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+
+```
+
+As we can see, the two main metrics, accuracy and auc don't vary greatly, but they do vary. Interestingly the logistic and the random forest models performed the best, with all three neural nets performing somewhat worse. 
+
+This is likely due to the massive amount of options that are available when tuning a neural net. Looking at efficient parameter tuning (such as the methods used for the other two models) may be a worthwhile effort. 
+
+Another possibility is that the upsampling led to decreased accuracy only because the test data set was so imbalanced. An analysis of precision vs recall could be worthwhile. Perhaps we are willing to sacrifice some misclassification of the majority class if it means we more accurately predict the minority class. 
 
